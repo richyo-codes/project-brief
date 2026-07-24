@@ -1,0 +1,8 @@
+{
+  "name": "sample-project",
+  "scripts": {
+    "dev": "vite",
+    "test": "vitest run",
+    "lint": "eslint ."
+  }
+}
