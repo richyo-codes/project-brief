@@ -57,6 +57,7 @@ class Render:
         return self.style("2", text)
 
 DOC_NAMES = ("README*", "INSTALL*", "DEVELOPMENT*", "CONTRIBUTING*", "AGENTS.md", "CLAUDE.md", "ARCHITECTURE*")
+IGNORED_DIRECTORIES = {".git", "node_modules", ".venv", "venv", ".dart_tool", "build", "dist", "target", "__pycache__"}
 
 
 def existing(root: Path, names: tuple[str, ...]) -> list[Path]:
@@ -260,13 +261,12 @@ def task_entries(root: Path) -> list[str]:
 
 
 def project_files(root: Path, max_depth: int = 3):
-    ignored = {".git", "node_modules", ".venv", "venv", ".dart_tool", "build", "dist", "target", "__pycache__"}
     for current, directories, files in os.walk(root):
         current_path = Path(current)
         relative = current_path.relative_to(root)
         if len(relative.parts) >= max_depth:
             directories[:] = []
-        directories[:] = [directory for directory in directories if directory not in ignored]
+        directories[:] = [directory for directory in directories if directory not in IGNORED_DIRECTORIES]
         for filename in files:
             yield current_path / filename
 
@@ -288,11 +288,10 @@ def notable_findings(root: Path) -> list[str]:
             nested_repos.append(str(path.parent.relative_to(root)))
     for current, directories, _ in os.walk(root):
         current_path = Path(current)
-        if current_path == root:
-            continue
-        if ".git" in directories:
+        if current_path != root and ".git" in directories:
             nested_repos.append(str(current_path.relative_to(root)))
             directories.remove(".git")
+        directories[:] = [directory for directory in directories if directory not in IGNORED_DIRECTORIES]
     if nested_repos:
         findings.append("nested Git repos: " + ", ".join(compact(sorted(set(nested_repos)), 4)))
 
@@ -328,7 +327,8 @@ def notable_findings(root: Path) -> list[str]:
             artifacts.append(str(path.relative_to(root)))
             continue
         try:
-            header = path.read_bytes()[:4]
+            with path.open("rb") as stream:
+                header = stream.read(4)
         except OSError:
             continue
         if header in {b"\x7fELF", b"MZ\x90\x00", b"\xca\xfe\xba\xbe"}:
