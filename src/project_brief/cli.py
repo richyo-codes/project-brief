@@ -56,6 +56,9 @@ class Render:
     def muted(self, text: str) -> str:
         return self.style("2", text)
 
+    def separator(self) -> str:
+        return self.muted("─" * 72)
+
 
 DOC_NAMES = ("README*", "INSTALL*", "DEVELOPMENT*", "CONTRIBUTING*", "AGENTS.md", "CLAUDE.md", "ARCHITECTURE*")
 
@@ -81,6 +84,19 @@ def read_json(path: Path) -> dict:
     except (OSError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def uses_uv(root: Path) -> bool:
+    if (root / "uv.lock").is_file():
+        return True
+    pyproject = root / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    try:
+        data = tomllib.loads(pyproject.read_text())
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    return isinstance(data, dict) and isinstance(data.get("tool"), dict) and "uv" in data["tool"]
 
 
 def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]:
@@ -111,6 +127,9 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
         if (root / "pytest.ini").exists() or "pytest" in pyproject.read_text(errors="ignore"):
             commands.append(Command("pytest", "run tests"))
         commands.append(Command("python -m build", "build distribution"))
+        if uses_uv(root):
+            systems.append("uv")
+            commands.extend((Command("uv sync", "install locked dependencies"), Command("uv lock", "update lockfile")))
 
     if (root / "Cargo.toml").is_file():
         systems.append("Rust (Cargo)")
@@ -144,6 +163,8 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
     if (root / "Dockerfile").is_file():
         systems.append("Docker")
         commands.append(Command("docker build .", "build container"))
+    if (root / ".project").is_file() or (root / ".classpath").is_file():
+        systems.append("Eclipse")
     return name, dedupe(commands), systems
 
 
@@ -198,6 +219,9 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         "pom.xml": "Maven",
         "build.gradle": "Gradle",
         "build.gradle.kts": "Gradle",
+        "uv.lock": "uv",
+        ".project": "Eclipse",
+        ".classpath": "Eclipse",
     }
     grouped: dict[Path, tuple[set[str], set[str]]] = {}
     for path in project_files(root, max_depth=5):
@@ -590,6 +614,8 @@ def main() -> int:
     notables = notable_findings(root)
     print(f"{render.title(name or root.name)}  {render.muted(f'({root})')}")
     if not args.compact and (docs or systems or task_files or scripts or found_components or notables):
+        print()
+        print(render.separator())
         print()
     print_section("docs", [link(path, root, args.links) for path in docs], render)
     print_section("systems", systems, render)
