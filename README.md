@@ -6,40 +6,25 @@ See [INSTALL.md](INSTALL.md) for user-wide installation with `uv`.
 
 ## Run
 
-Install the project and its locked environment with [uv](https://docs.astral.sh/uv/):
+After installation, run the command directly:
 
 ```sh
-uv sync
-```
-
-Run the CLI through the managed environment:
-
-```sh
-uv run project-brief
-uv run project-brief --components
-uv run project-brief --ci
-uv run project-brief --security
-```
-
-Run the test suite with:
-
-```sh
-uv run python tests/test_cli.py
-```
-
-The lockfile is `uv.lock`; update it after changing project metadata or dependencies with `uv lock`.
-
-The installed command is also available directly after activating the environment:
-
-```sh
-source .venv/bin/activate
 project-brief
 project-brief --components
 project-brief --ci
 project-brief --security
 ```
 
-Use `--all` for full command and advisory lists, `--security --offline` to inventory packages without network access, and `--color always --icons` for an interactive display. The default layout separates the summary, commands, and hint with blank lines; use `--compact` for a dense view.
+Use `--all` for full command and advisory lists, `--security --offline` to inventory packages without network access, and `--color always --icons` for an interactive display. Use `--compact` for a dense view.
+
+For development, install the local environment and run the tests with:
+
+```sh
+uv sync
+uv run python tests/test_cli.py
+```
+
+Update the lockfile after changing project metadata or dependencies with `uv lock`.
 
 ## Output contract
 

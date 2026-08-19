@@ -32,5 +32,5 @@ To install the project into its local development environment instead:
 
 ```sh
 uv sync
-uv run project-brief
+uv run python tests/test_cli.py
 ```
