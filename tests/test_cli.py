@@ -17,7 +17,7 @@ def main():
     eclipse_summary = subprocess.run([*TOOL, "--root", ECLIPSE_FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "Eclipse" in eclipse_summary and ".project" in eclipse_summary, eclipse_summary
     summary = subprocess.run([*TOOL, "--root", FIXTURE], text=True, capture_output=True, check=True).stdout
-    assert "sample-project" in summary and "\n─" in summary and "\n\ndocs" in summary and "\n\ncommands" in summary, summary
+    assert "## sample-project" in summary and "\n\ndocs" in summary and "\n\ncommands" in summary, summary
     for expected in ("sample-project", "README.md", "docs/development.md", "Node.js (package.json)", "Just (justfile)", "npm run test", "make check", "just build", "launch-config list", "./scripts/build-all.sh", "sh scripts/generate.sh", "git hooks: .githooks", "git submodules: .gitmodules", "editor/IDE files: .idea, .vscode", "CI: .github/workflows", "local environment files: .env", "binary/artifact files: artifacts/demo.apk", "packages/web [Node.js]", "libs/engine [Rust/Cargo]", "services/api [Python requirements]", "native [CMake]"):
         assert expected in summary, summary
     grep = subprocess.run([*TOOL, "--root", FIXTURE, "--grep", "install"], text=True, capture_output=True, check=True).stdout

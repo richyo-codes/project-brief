@@ -46,7 +46,7 @@ class Render:
     def section(self, text: str) -> str:
         icon = {
             "docs": "📖 ", "systems": "⚙️  ", "launch": "🚀 ", "scripts": "🧰 ",
-            "components": "🧩 ", "notable": "⚠️  ", "commands": "▶️  ", "hint": "💡 ",
+            "components": "🧩 ", "notable": "⚠️  ", "commands": "▶️  ",
         }.get(text, "") if self.icons else ""
         return self.style("1;34", icon + text)
 
@@ -55,10 +55,6 @@ class Render:
 
     def muted(self, text: str) -> str:
         return self.style("2", text)
-
-    def separator(self) -> str:
-        return self.muted("─" * 72)
-
 
 DOC_NAMES = ("README*", "INSTALL*", "DEVELOPMENT*", "CONTRIBUTING*", "AGENTS.md", "CLAUDE.md", "ARCHITECTURE*")
 
@@ -612,10 +608,8 @@ def main() -> int:
     docs = document_paths(root)
     task_files = task_entries(root)
     notables = notable_findings(root)
-    print(f"{render.title(name or root.name)}  {render.muted(f'({root})')}")
+    print(f"{render.title(f'## {name or root.name}')}  {render.muted(f'({root})')}")
     if not args.compact and (docs or systems or task_files or scripts or found_components or notables):
-        print()
-        print(render.separator())
         print()
     print_section("docs", [link(path, root, args.links) for path in docs], render)
     print_section("systems", systems, render)
@@ -638,10 +632,6 @@ def main() -> int:
             print(render.muted(f"  … {len(commands) - limit} more; pass --all"))
     else:
         print(f"{render.section('commands')}  {render.muted('no recognized build/test manifest')}")
-    hint = "project-brief --grep 'install|setup|build'"
-    if not args.compact:
-        print()
-    print(f"{render.section('hint')}  {render.muted(hint)}")
     return 0
 
 
