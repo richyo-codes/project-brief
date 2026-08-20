@@ -58,6 +58,7 @@ class Render:
 
 DOC_NAMES = ("README*", "INSTALL*", "DEVELOPMENT*", "CONTRIBUTING*", "AGENTS.md", "CLAUDE.md", "ARCHITECTURE*")
 IGNORED_DIRECTORIES = {".git", "node_modules", ".venv", "venv", ".dart_tool", "build", "dist", "target", "__pycache__"}
+VISUAL_STUDIO_FILES = {".sln", ".csproj", ".fsproj", ".vbproj", ".vcxproj"}
 
 
 def existing(root: Path, names: tuple[str, ...]) -> list[Path]:
@@ -162,6 +163,13 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
         commands.append(Command("docker build .", "build container"))
     if (root / ".project").is_file() or (root / ".classpath").is_file():
         systems.append("Eclipse")
+    visual_studio_files = [path for path in root.iterdir() if path.is_file() and path.suffix.lower() in VISUAL_STUDIO_FILES]
+    if visual_studio_files:
+        systems.append("Visual Studio")
+        if any(path.suffix.lower() in {".sln", ".csproj", ".fsproj", ".vbproj"} for path in visual_studio_files):
+            commands.extend((Command("dotnet build", "build"), Command("dotnet test", "test")))
+        if any(path.suffix.lower() == ".vcxproj" for path in visual_studio_files):
+            commands.append(Command("msbuild", "build"))
     return name, dedupe(commands), systems
 
 
@@ -219,10 +227,17 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         "uv.lock": "uv",
         ".project": "Eclipse",
         ".classpath": "Eclipse",
+        ".sln": "Visual Studio",
+        ".csproj": "Visual Studio",
+        ".fsproj": "Visual Studio",
+        ".vbproj": "Visual Studio",
+        ".vcxproj": "Visual Studio",
     }
     grouped: dict[Path, tuple[set[str], set[str]]] = {}
     for path in project_files(root, max_depth=5):
         kind = markers.get(path.name)
+        if path.suffix.lower() in VISUAL_STUDIO_FILES:
+            kind = "Visual Studio"
         if path.name.startswith("requirements") and path.suffix == ".txt":
             kind = "Python requirements"
         if not kind:
