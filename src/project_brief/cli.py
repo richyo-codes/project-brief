@@ -84,6 +84,63 @@ def read_json(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def npmrc_settings(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    settings: dict[str, str] = {}
+    for line in path.read_text(errors="ignore").splitlines():
+        line = line.strip()
+        if not line or line.startswith(("#", ";")) or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        settings[key.strip().lower()] = value.strip().lower()
+    return settings
+
+
+def npm_install_script_packages(lockfile: Path) -> list[str]:
+    data = read_json(lockfile)
+    packages = data.get("packages", {})
+    if not isinstance(packages, dict):
+        return []
+    names: list[str] = []
+    for location, package in packages.items():
+        if not location or not isinstance(package, dict) or not package.get("hasInstallScript"):
+            continue
+        names.append(str(package.get("name") or location.rsplit("node_modules/", 1)[-1]))
+    return sorted(set(names))
+
+
+def npm_script_policy_findings(root: Path) -> list[str]:
+    findings: list[str] = []
+    for package in project_files(root, max_depth=5):
+        if package.name != "package.json":
+            continue
+        lockfile = package.with_name("package-lock.json")
+        script_packages = npm_install_script_packages(lockfile)
+        data = read_json(package)
+        npmrc = npmrc_settings(package.with_name(".npmrc"))
+        relative = package.parent.relative_to(root)
+        label = "npm install scripts" if str(relative) == "." else f"{relative} npm install scripts"
+        allow_scripts = data.get("allowScripts")
+        dangerously_allow_all = npmrc.get("dangerously-allow-all-scripts") == "true"
+        ignore_scripts = npmrc.get("ignore-scripts") == "true"
+        strict_allow_scripts = npmrc.get("strict-allow-scripts") == "true"
+        configured_allow_scripts = npmrc.get("allow-scripts")
+        if dangerously_allow_all:
+            findings.append(f"{label}: all dependency scripts enabled (dangerously-allow-all-scripts=true)")
+        elif ignore_scripts:
+            findings.append(f"{label}: disabled (ignore-scripts=true)")
+        elif isinstance(allow_scripts, dict) or configured_allow_scripts:
+            allowed = sum(value is True for value in allow_scripts.values()) if isinstance(allow_scripts, dict) else len(configured_allow_scripts.split(","))
+            denied = sum(value is False for value in allow_scripts.values()) if isinstance(allow_scripts, dict) else 0
+            policy = f"{allowed} approved" + (f", {denied} denied" if denied else "")
+            strict = "; strict" if strict_allow_scripts else ""
+            findings.append(f"{label}: policy configured ({policy}{strict})")
+        elif script_packages:
+            findings.append(f"{label}: {len(script_packages)} dependency script packages need review for npm v12; run npm install-scripts ls")
+    return findings
+
+
 def uses_uv(root: Path) -> bool:
     if (root / "uv.lock").is_file():
         return True
@@ -334,6 +391,7 @@ def notable_findings(root: Path) -> list[str]:
         findings.append("local environment files: " + ", ".join(sorted(environment_files)))
     if (root / ".gitattributes").is_file() and "filter=lfs" in (root / ".gitattributes").read_text(errors="ignore"):
         findings.append("Git LFS: .gitattributes")
+    findings.extend(npm_script_policy_findings(root))
 
     artifact_extensions = {".a", ".aab", ".apk", ".dll", ".dylib", ".exe", ".img", ".ipa", ".iso", ".jar", ".o", ".qcow2", ".so", ".wasm", ".zip"}
     artifacts: list[str] = []
@@ -550,6 +608,55 @@ def grep_docs(root: Path, pattern: str, links: bool) -> int:
     return 0 if matches else 1
 
 
+def fzf_entries(root: Path) -> list[str]:
+    entries: dict[str, str] = {}
+
+    def add(path: Path, kind: str) -> None:
+        if path.is_file():
+            location = f"{path.relative_to(root)}:1"
+            entries[location] = f"{kind}  {location}"
+
+    for path in document_paths(root):
+        add(path, "doc")
+    scripts = root / "scripts"
+    if scripts.is_dir():
+        for path in scripts.iterdir():
+            add(path, "script")
+    for directory, _, files in components(root):
+        for filename in files:
+            add(directory / filename, "manifest")
+    for relative in task_entries(root):
+        add(root / relative, "task")
+    for path in ci_files(root):
+        add(path, "CI")
+    return [f"{location}\t{label}" for location, label in sorted(entries.items())]
+
+
+def pick_with_fzf(root: Path, query: str | None) -> int:
+    fzf = shutil.which("fzf")
+    if not fzf:
+        print("project-brief: fzf is required for --fzf; install fzf and try again", file=sys.stderr)
+        return 2
+    entries = fzf_entries(root)
+    if not entries:
+        print("project-brief: no docs, scripts, manifests, tasks, or CI files found", file=sys.stderr)
+        return 1
+    command = [fzf, "--delimiter", "\t", "--with-nth", "2..", "--prompt", "project-brief> "]
+    if query:
+        command.extend(("--filter", query))
+    result = subprocess.run(command, input="\n".join(entries) + "\n", text=True, capture_output=True)
+    if result.returncode == 130:
+        return 1
+    if result.returncode:
+        print(f"project-brief: fzf failed: {result.stderr.strip()}", file=sys.stderr)
+        return result.returncode
+    selected = result.stdout.splitlines()
+    if not selected:
+        return 1
+    print(selected[0].split("\t", 1)[0])
+    return 0
+
+
 def view_document(root: Path, selection: str | None) -> int:
     docs = document_paths(root)
     if not docs:
@@ -580,6 +687,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="project-brief", description=__doc__)
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="project root (default: current directory)")
     parser.add_argument("--grep", metavar="REGEX", help="search discovered project docs")
+    parser.add_argument("--fzf", nargs="?", const="", metavar="QUERY", help="pick a discovered file with fzf and print its path:line")
     parser.add_argument("--view", nargs="?", const="", metavar="DOC", help="view README or a discovered document (uses glow when available)")
     parser.add_argument("--ci", action="store_true", help="inspect CI/CD configuration files")
     parser.add_argument("--authors", action="store_true", help="count unique Git commit authors")
@@ -600,6 +708,8 @@ def main() -> int:
         return 2
     if args.grep:
         return grep_docs(root, args.grep, args.links)
+    if args.fzf is not None:
+        return pick_with_fzf(root, args.fzf or None)
     if args.view is not None:
         return view_document(root, args.view or None)
     if args.ci:

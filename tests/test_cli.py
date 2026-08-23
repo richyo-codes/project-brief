@@ -6,10 +6,15 @@ from pathlib import Path
 
 
 PROJECT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT / "src"))
+from project_brief.cli import fzf_entries
+
+
 TOOL = [sys.executable, str(PROJECT / "src" / "project_brief" / "cli.py")]
 FIXTURE = PROJECT / "tests" / "fixtures" / "sample-project"
 ECLIPSE_FIXTURE = PROJECT / "tests" / "fixtures" / "eclipse-project"
 VISUAL_STUDIO_FIXTURE = PROJECT / "tests" / "fixtures" / "visual-studio-project"
+NPM_SECURITY_FIXTURE = PROJECT / "tests" / "fixtures" / "npm-security-project"
 
 
 def main():
@@ -19,6 +24,12 @@ def main():
     assert "Eclipse" in eclipse_summary and ".project" in eclipse_summary, eclipse_summary
     visual_studio_summary = subprocess.run([*TOOL, "--root", VISUAL_STUDIO_FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "Visual Studio" in visual_studio_summary and "MyApp.csproj" in visual_studio_summary and "dotnet build" in visual_studio_summary, visual_studio_summary
+    npm_security_summary = subprocess.run([*TOOL, "--root", NPM_SECURITY_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "npm install scripts: 2 dependency script packages need review for npm v12" in npm_security_summary, npm_security_summary
+    picker_entries = fzf_entries(FIXTURE)
+    assert any(entry.startswith("README.md:1\tdoc") for entry in picker_entries), picker_entries
+    assert any(entry.startswith("scripts/build-all.sh:1\tscript") for entry in picker_entries), picker_entries
+    assert any(entry.startswith(".vscode/tasks.json:1\ttask") for entry in picker_entries), picker_entries
     summary = subprocess.run([*TOOL, "--root", FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "## sample-project" in summary and "\n\ndocs" in summary and "\n\ncommands" in summary, summary
     for expected in ("sample-project", "README.md", "docs/development.md", "Node.js (package.json)", "Just (justfile)", "npm run test", "make check", "just build", "launch-config list", "./scripts/build-all.sh", "sh scripts/generate.sh", "git hooks: .githooks", "git submodules: .gitmodules", "editor/IDE files: .idea, .vscode", "CI: .github/workflows", "local environment files: .env", "binary/artifact files: artifacts/demo.apk", "packages/web [Node.js]", "libs/engine [Rust/Cargo]", "services/api [Python requirements]", "native [CMake]"):

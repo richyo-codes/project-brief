@@ -17,6 +17,13 @@ project-brief --security
 
 Use `--all` for full command and advisory lists, `--security --offline` to inventory packages without network access, and `--color always --icons` for an interactive display. Use `--compact` for a dense view.
 
+With [fzf](https://github.com/junegunn/fzf) installed, choose a discovered document, script, manifest, task, or CI file and print a terminal-clickable location:
+
+```sh
+project-brief --fzf
+project-brief --fzf README
+```
+
 For development, install the local environment and run the tests with:
 
 ```sh
