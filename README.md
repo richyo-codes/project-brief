@@ -3,6 +3,7 @@
 `project-brief` gives a compact terminal overview of a source tree: docs, build and test commands, scripts, editor launchers, subprojects, notable repository wiring, CI/CD, and locked dependency vulnerability matches.
 
 See [INSTALL.md](INSTALL.md) for user-wide installation with `uv`.
+See [COMPILING.md](COMPILING.md) for the native executable options considered for the project.
 
 ## Run
 

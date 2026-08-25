@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-from collections import Counter
 import json
 import os
 import re
@@ -12,10 +11,11 @@ import shutil
 import subprocess
 import sys
 import tomllib
-from urllib.error import URLError
-from urllib.request import Request, urlopen
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 
 @dataclass(frozen=True)
@@ -256,11 +256,11 @@ def just_commands(root: Path) -> list[Command]:
 
 def script_commands(root: Path) -> list[Command]:
     commands: list[Command] = []
-    for directory_name in ("scripts", "bin"):
+    for directory_name in ("scripts", "bin", "tool", "tools"):
         directory = root / directory_name
         if not directory.is_dir():
             continue
-        description = "bin command" if directory_name == "bin" else "project script"
+        description = "bin command" if directory_name == "bin" else "tool command" if directory_name in {"tool", "tools"} else "project script"
         for path in sorted((item for item in directory.iterdir() if item.is_file()), key=lambda item: item.name.lower()):
             relative = path.relative_to(root)
             if path.stat().st_mode & 0o111:
@@ -461,6 +461,7 @@ def inspect_authors(root: Path) -> int:
         ["git", "-C", str(root), "log", "--format=%aN <%aE>"],
         text=True,
         capture_output=True,
+        check=False,
     )
     if result.returncode:
         print("project-brief: not a Git repository with commit history", file=sys.stderr)
@@ -620,11 +621,12 @@ def fzf_entries(root: Path) -> list[str]:
 
     for path in document_paths(root):
         add(path, "doc")
-    for directory_name in ("scripts", "bin"):
+    for directory_name in ("scripts", "bin", "tool", "tools"):
         scripts = root / directory_name
         if scripts.is_dir():
             for path in scripts.iterdir():
-                add(path, "script" if directory_name == "scripts" else "bin")
+                kind = "script" if directory_name == "scripts" else "bin" if directory_name == "bin" else "tool"
+                add(path, kind)
     for directory, _, files in components(root):
         for filename in files:
             add(directory / filename, "manifest")
@@ -647,7 +649,7 @@ def pick_with_fzf(root: Path, query: str | None) -> int:
     command = [fzf, "--delimiter", "\t", "--with-nth", "2..", "--prompt", "project-brief> "]
     if query:
         command.extend(("--filter", query))
-    result = subprocess.run(command, input="\n".join(entries) + "\n", text=True, capture_output=True)
+    result = subprocess.run(command, input="\n".join(entries) + "\n", text=True, capture_output=True, check=False)
     if result.returncode == 130:
         return 1
     if result.returncode:
