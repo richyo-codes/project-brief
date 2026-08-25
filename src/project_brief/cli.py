@@ -255,16 +255,18 @@ def just_commands(root: Path) -> list[Command]:
 
 
 def script_commands(root: Path) -> list[Command]:
-    directory = root / "scripts"
-    if not directory.is_dir():
-        return []
     commands: list[Command] = []
-    for path in sorted((item for item in directory.iterdir() if item.is_file()), key=lambda item: item.name.lower()):
-        relative = path.relative_to(root)
-        if path.stat().st_mode & 0o111:
-            commands.append(Command(f"./{relative}", "project script"))
-        elif path.suffix in {".sh", ".bash", ".zsh"}:
-            commands.append(Command(f"sh {relative}", "shell script"))
+    for directory_name in ("scripts", "bin"):
+        directory = root / directory_name
+        if not directory.is_dir():
+            continue
+        description = "bin command" if directory_name == "bin" else "project script"
+        for path in sorted((item for item in directory.iterdir() if item.is_file()), key=lambda item: item.name.lower()):
+            relative = path.relative_to(root)
+            if path.stat().st_mode & 0o111:
+                commands.append(Command(f"./{relative}", description))
+            elif path.suffix in {".sh", ".bash", ".zsh"}:
+                commands.append(Command(f"sh {relative}", "shell script"))
     return commands
 
 
@@ -618,10 +620,11 @@ def fzf_entries(root: Path) -> list[str]:
 
     for path in document_paths(root):
         add(path, "doc")
-    scripts = root / "scripts"
-    if scripts.is_dir():
-        for path in scripts.iterdir():
-            add(path, "script")
+    for directory_name in ("scripts", "bin"):
+        scripts = root / directory_name
+        if scripts.is_dir():
+            for path in scripts.iterdir():
+                add(path, "script" if directory_name == "scripts" else "bin")
     for directory, _, files in components(root):
         for filename in files:
             add(directory / filename, "manifest")

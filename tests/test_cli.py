@@ -29,6 +29,7 @@ def main():
     picker_entries = fzf_entries(FIXTURE)
     assert any(entry.startswith("README.md:1\tdoc") for entry in picker_entries), picker_entries
     assert any(entry.startswith("scripts/build-all.sh:1\tscript") for entry in picker_entries), picker_entries
+    assert any(entry.startswith("bin/project-check.sh:1\tbin") for entry in picker_entries), picker_entries
     assert any(entry.startswith(".vscode/tasks.json:1\ttask") for entry in picker_entries), picker_entries
     summary = subprocess.run([*TOOL, "--root", FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "## sample-project" in summary and "\n\ndocs" in summary and "\n\ncommands" in summary, summary
