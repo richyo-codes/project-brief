@@ -4,6 +4,7 @@
 
 See [INSTALL.md](INSTALL.md) for user-wide installation with `uv`.
 See [COMPILING.md](COMPILING.md) for the native executable options considered for the project.
+See [PUBLISHING.md](PUBLISHING.md) for the PyPI release checklist.
 
 ## Run
 
