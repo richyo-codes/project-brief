@@ -57,6 +57,8 @@ class Render:
         return self.style("2", text)
 
 DOC_NAMES = ("README*", "INSTALL*", "DEVELOPMENT*", "CONTRIBUTING*", "AGENTS.md", "CLAUDE.md", "ARCHITECTURE*")
+AI_FILE_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".clinerules", ".roomodes", "copilot-instructions.md"}
+AI_RULE_DIRECTORIES = {".cursor/rules", ".windsurf/rules", ".clinerules", ".roo/rules", ".github/instructions"}
 IGNORED_DIRECTORIES = {".git", "node_modules", ".venv", "venv", ".dart_tool", "build", "dist", "target", "__pycache__"}
 VISUAL_STUDIO_FILES = {".sln", ".csproj", ".fsproj", ".vbproj", ".vcxproj"}
 
@@ -74,6 +76,16 @@ def document_paths(root: Path) -> list[Path]:
     if docs.is_dir():
         paths.extend(path for path in docs.iterdir() if path.is_file() and path.suffix.lower() in {".md", ".txt", ".rst"})
     return sorted(set(paths), key=lambda path: str(path).lower())
+
+
+def ai_paths(root: Path) -> list[Path]:
+    found: list[Path] = []
+    for path in project_files(root, max_depth=5):
+        relative = path.relative_to(root)
+        relative_directory = "/".join(relative.parts[:-1])
+        if path.name in AI_FILE_NAMES or any(relative_directory == directory or relative_directory.startswith(f"{directory}/") for directory in AI_RULE_DIRECTORIES):
+            found.append(path)
+    return sorted(found, key=lambda path: str(path).lower())
 
 
 def read_json(path: Path) -> dict:
@@ -192,6 +204,12 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
     if (root / "go.mod").is_file():
         systems.append("Go modules")
         commands.extend((Command("go build ./...", "build"), Command("go test ./...", "test"), Command("go run .", "run")))
+    if (root / "build.zig").is_file() or (root / "build.zig.zon").is_file():
+        systems.append("Zig")
+        commands.extend((Command("zig build", "build"), Command("zig build test", "test")))
+    if (root / "platformio.ini").is_file():
+        systems.append("PlatformIO")
+        commands.extend((Command("pio run", "build embedded project"), Command("pio test", "run tests")))
     if (root / "pubspec.yaml").is_file():
         systems.append("Flutter/Dart (pubspec.yaml)")
         commands.extend((
@@ -205,6 +223,14 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
     if (root / "pom.xml").is_file():
         systems.append("Maven")
         commands.extend((Command("mvn package", "build"), Command("mvn test", "test")))
+    conan_files = {"conanfile.py", "conanfile.txt", "conan.lock"}
+    if any((root / filename).is_file() for filename in conan_files):
+        systems.append("Conan")
+        if (root / "conanfile.py").is_file() or (root / "conanfile.txt").is_file():
+            commands.extend((Command("conan install . --build=missing", "install dependencies"), Command("conan build .", "build")))
+    if (root / "vcpkg.json").is_file() or (root / "vcpkg-configuration.json").is_file():
+        systems.append("vcpkg")
+        commands.append(Command("vcpkg install", "install dependencies"))
     if (root / "build.gradle").is_file() or (root / "build.gradle.kts").is_file():
         systems.append("Gradle")
         gradle = "./gradlew" if (root / "gradlew").is_file() else "gradle"
@@ -215,6 +241,21 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
     if (root / "meson.build").is_file():
         systems.append("Meson")
         commands.extend((Command("meson setup build", "configure"), Command("meson compile -C build", "build"), Command("meson test -C build", "test")))
+    if (root / "SConstruct").is_file() or (root / "SConscript").is_file():
+        systems.append("SCons")
+        commands.append(Command("scons", "build"))
+    bazel_files = {"MODULE.bazel", "WORKSPACE", "WORKSPACE.bazel", "BUILD", "BUILD.bazel"}
+    if any((root / filename).is_file() for filename in bazel_files):
+        systems.append("Bazel")
+        commands.extend((Command("bazel build //...", "build"), Command("bazel test //...", "test")))
+    autotools_files = {"configure.ac", "configure.in", "Makefile.am", "GNUmakefile.am", "aclocal.m4"}
+    if any((root / filename).is_file() for filename in autotools_files):
+        systems.append("Autotools")
+        if (root / "configure.ac").is_file() or (root / "configure.in").is_file():
+            commands.append(Command("autoreconf -fi", "bootstrap build system"))
+        if (root / "configure").is_file() or (root / "configure.ac").is_file() or (root / "configure.in").is_file():
+            commands.append(Command("./configure", "configure build"))
+        commands.extend((Command("make", "build"), Command("make check", "test")))
     if (root / "Dockerfile").is_file():
         systems.append("Docker")
         commands.append(Command("docker build .", "build container"))
@@ -306,6 +347,9 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         "pyproject.toml": "Python",
         "setup.py": "Python",
         "go.mod": "Go modules",
+        "build.zig": "Zig",
+        "build.zig.zon": "Zig",
+        "platformio.ini": "PlatformIO",
         "pubspec.yaml": "Flutter/Dart",
         "CMakeLists.txt": "CMake",
         "meson.build": "Meson",
@@ -326,6 +370,23 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         "Gemfile.lock": "Ruby/Bundler",
         "Rakefile": "Ruby/Bundler",
         "AndroidManifest.xml": "Android Studio",
+        "configure.ac": "Autotools",
+        "configure.in": "Autotools",
+        "Makefile.am": "Autotools",
+        "GNUmakefile.am": "Autotools",
+        "aclocal.m4": "Autotools",
+        "SConstruct": "SCons",
+        "SConscript": "SCons",
+        "MODULE.bazel": "Bazel",
+        "WORKSPACE": "Bazel",
+        "WORKSPACE.bazel": "Bazel",
+        "BUILD": "Bazel",
+        "BUILD.bazel": "Bazel",
+        "conanfile.py": "Conan",
+        "conanfile.txt": "Conan",
+        "conan.lock": "Conan",
+        "vcpkg.json": "vcpkg",
+        "vcpkg-configuration.json": "vcpkg",
     }
     grouped: dict[Path, tuple[set[str], set[str]]] = {}
     for path in project_files(root, max_depth=5):
@@ -368,6 +429,16 @@ def inspect_components(root: Path, links: bool) -> int:
         return 1
     for component in found:
         print(component_label(root, component, links))
+    return 0
+
+
+def inspect_ai(root: Path, links: bool) -> int:
+    found = ai_paths(root)
+    if not found:
+        print("project-brief: no AI/LLM instruction files found", file=sys.stderr)
+        return 1
+    for path in found:
+        print(link(path, root, links))
     return 0
 
 
@@ -700,6 +771,8 @@ def fzf_entries(root: Path) -> list[str]:
         add(root / relative, "task")
     for path in ci_files(root):
         add(path, "CI")
+    for path in ai_paths(root):
+        add(path, "AI")
     return [f"{location}\t{label}" for location, label in sorted(entries.items())]
 
 
@@ -763,6 +836,7 @@ def main() -> int:
     parser.add_argument("--ci", action="store_true", help="inspect CI/CD configuration files")
     parser.add_argument("--authors", action="store_true", help="count unique Git commit authors")
     parser.add_argument("--components", action="store_true", help="list project and subproject build manifests")
+    parser.add_argument("--ai", action="store_true", help="list AI/LLM instruction and context files")
     parser.add_argument("--security", action="store_true", help="query OSV for vulnerabilities in locked dependency versions")
     parser.add_argument("--offline", action="store_true", help="with --security, inventory lockfiles without a network request")
     parser.add_argument("--all", action="store_true", help="show every detected command, not just the most useful")
@@ -789,6 +863,8 @@ def main() -> int:
         return inspect_authors(root)
     if args.components:
         return inspect_components(root, args.links)
+    if args.ai:
+        return inspect_ai(root, args.links)
     if args.security:
         return inspect_security(root, args.offline, args.all)
 

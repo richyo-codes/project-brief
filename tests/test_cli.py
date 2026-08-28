@@ -15,6 +15,15 @@ RUBY_FIXTURE = PROJECT / "tests" / "fixtures" / "ruby-project"
 JAVA_FIXTURE = PROJECT / "tests" / "fixtures" / "java-project"
 ANDROID_FIXTURE = PROJECT / "tests" / "fixtures" / "android-studio-project"
 JETBRAINS_FIXTURE = PROJECT / "tests" / "fixtures" / "jetbrains-project"
+AUTOTOOLS_FIXTURE = PROJECT / "tests" / "fixtures" / "autotools-project"
+CONAN_FIXTURE = PROJECT / "tests" / "fixtures" / "conan-project"
+VCPKG_FIXTURE = PROJECT / "tests" / "fixtures" / "vcpkg-project"
+MAVEN_FIXTURE = PROJECT / "tests" / "fixtures" / "maven-project"
+AI_FIXTURE = PROJECT / "tests" / "fixtures" / "ai-project"
+SCONS_FIXTURE = PROJECT / "tests" / "fixtures" / "scons-project"
+BAZEL_FIXTURE = PROJECT / "tests" / "fixtures" / "bazel-project"
+ZIG_FIXTURE = PROJECT / "tests" / "fixtures" / "zig-project"
+PLATFORMIO_FIXTURE = PROJECT / "tests" / "fixtures" / "platformio-project"
 
 
 def main():
@@ -37,6 +46,24 @@ def main():
     assert "Android Studio" in android_summary and "AndroidManifest.xml" in android_summary and "assemble" in android_summary, android_summary
     jetbrains_summary = subprocess.run([*TOOL, "--root", JETBRAINS_FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "JetBrains" in jetbrains_summary and ".idea" in jetbrains_summary, jetbrains_summary
+    autotools_summary = subprocess.run([*TOOL, "--root", AUTOTOOLS_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Autotools" in autotools_summary and "configure.ac" in autotools_summary and "autoreconf -fi" in autotools_summary and "make check" in autotools_summary, autotools_summary
+    conan_summary = subprocess.run([*TOOL, "--root", CONAN_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Conan" in conan_summary and "conanfile.py" in conan_summary and "conan install" in conan_summary, conan_summary
+    vcpkg_summary = subprocess.run([*TOOL, "--root", VCPKG_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "vcpkg" in vcpkg_summary and "vcpkg.json" in vcpkg_summary and "vcpkg install" in vcpkg_summary, vcpkg_summary
+    maven_summary = subprocess.run([*TOOL, "--root", MAVEN_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Maven" in maven_summary and "pom.xml" in maven_summary and "mvn package" in maven_summary, maven_summary
+    ai_summary = subprocess.run([*TOOL, "--root", AI_FIXTURE, "--ai"], text=True, capture_output=True, check=True).stdout
+    assert "AGENTS.md:1" in ai_summary and ".cursor/rules/style.md:1" in ai_summary, ai_summary
+    scons_summary = subprocess.run([*TOOL, "--root", SCONS_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "SCons" in scons_summary and "SConstruct" in scons_summary and "scons" in scons_summary, scons_summary
+    bazel_summary = subprocess.run([*TOOL, "--root", BAZEL_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Bazel" in bazel_summary and "MODULE.bazel" in bazel_summary and "bazel build //..." in bazel_summary, bazel_summary
+    zig_summary = subprocess.run([*TOOL, "--root", ZIG_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Zig" in zig_summary and "build.zig" in zig_summary and "zig build test" in zig_summary, zig_summary
+    platformio_summary = subprocess.run([*TOOL, "--root", PLATFORMIO_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "PlatformIO" in platformio_summary and "platformio.ini" in platformio_summary and "pio run" in platformio_summary, platformio_summary
     if shutil.which("fzf"):
         picked_script = subprocess.run([*TOOL, "--root", FIXTURE, "--fzf", "build-all"], text=True, capture_output=True, check=True).stdout.strip()
         assert picked_script == "scripts/build-all.sh:1", picked_script
