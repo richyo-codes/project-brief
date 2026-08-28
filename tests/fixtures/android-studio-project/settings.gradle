@@ -1,0 +1,6 @@
+pluginManagement {
+    repositories { google(); mavenCentral(); gradlePluginPortal() }
+}
+
+rootProject.name = "Android Studio Fixture"
+include ":app"

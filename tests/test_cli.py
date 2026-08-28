@@ -11,6 +11,10 @@ ECLIPSE_FIXTURE = PROJECT / "tests" / "fixtures" / "eclipse-project"
 VISUAL_STUDIO_FIXTURE = PROJECT / "tests" / "fixtures" / "visual-studio-project"
 NPM_SECURITY_FIXTURE = PROJECT / "tests" / "fixtures" / "npm-security-project"
 GODOT_FIXTURE = PROJECT / "tests" / "fixtures" / "godot-project"
+RUBY_FIXTURE = PROJECT / "tests" / "fixtures" / "ruby-project"
+JAVA_FIXTURE = PROJECT / "tests" / "fixtures" / "java-project"
+ANDROID_FIXTURE = PROJECT / "tests" / "fixtures" / "android-studio-project"
+JETBRAINS_FIXTURE = PROJECT / "tests" / "fixtures" / "jetbrains-project"
 
 
 def main():
@@ -25,6 +29,14 @@ def main():
     assert "npm install scripts: 2 dependency script packages need review for npm v12" in npm_security_summary, npm_security_summary
     godot_summary = subprocess.run([*TOOL, "--root", GODOT_FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "## Godot Fixture" in godot_summary and "Godot" in godot_summary and "project.godot" in godot_summary and "godot --editor --path ." in godot_summary, godot_summary
+    ruby_summary = subprocess.run([*TOOL, "--root", RUBY_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Ruby/Bundler" in ruby_summary and "Gemfile" in ruby_summary and "bundle install" in ruby_summary, ruby_summary
+    java_summary = subprocess.run([*TOOL, "--root", JAVA_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Java" in java_summary and "Main.java" in java_summary, java_summary
+    android_summary = subprocess.run([*TOOL, "--root", ANDROID_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Android Studio" in android_summary and "AndroidManifest.xml" in android_summary and "assemble" in android_summary, android_summary
+    jetbrains_summary = subprocess.run([*TOOL, "--root", JETBRAINS_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "JetBrains" in jetbrains_summary and ".idea" in jetbrains_summary, jetbrains_summary
     if shutil.which("fzf"):
         picked_script = subprocess.run([*TOOL, "--root", FIXTURE, "--fzf", "build-all"], text=True, capture_output=True, check=True).stdout.strip()
         assert picked_script == "scripts/build-all.sh:1", picked_script

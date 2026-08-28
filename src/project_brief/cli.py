@@ -218,6 +218,24 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
     if (root / "Dockerfile").is_file():
         systems.append("Docker")
         commands.append(Command("docker build .", "build container"))
+    ruby_files = {"Gemfile", "Gemfile.lock", "Rakefile"}
+    ruby_manifests = [path for path in root.iterdir() if path.is_file() and (path.name in ruby_files or path.suffix.lower() == ".gemspec")]
+    if ruby_manifests:
+        systems.append("Ruby/Bundler")
+        if any(path.name == "Gemfile" for path in ruby_manifests):
+            commands.append(Command("bundle install", "install dependencies"))
+        if any(path.name == "Rakefile" for path in ruby_manifests):
+            commands.append(Command("bundle exec rake", "run tasks"))
+    java_source = (root / "src" / "main" / "java").is_dir() or any(path.suffix.lower() == ".java" for path in project_files(root, max_depth=3))
+    if java_source:
+        systems.append("Java")
+    android_manifest = root / "app" / "src" / "main" / "AndroidManifest.xml"
+    if android_manifest.is_file() and ((root / "settings.gradle").is_file() or (root / "settings.gradle.kts").is_file()):
+        systems.append("Android Studio")
+        gradle = "./gradlew" if (root / "gradlew").is_file() else "gradle"
+        commands.extend((Command(f"{gradle} assemble", "build Android app"), Command(f"{gradle} test", "test Android app")))
+    if (root / ".idea").is_dir() or (root / ".fleet").is_dir() or any(path.suffix.lower() == ".iml" for path in root.iterdir() if path.is_file()):
+        systems.append("JetBrains")
     if (root / ".project").is_file() or (root / ".classpath").is_file():
         systems.append("Eclipse")
     visual_studio_files = [path for path in root.iterdir() if path.is_file() and path.suffix.lower() in VISUAL_STUDIO_FILES]
@@ -304,12 +322,22 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         ".vcxproj": "Visual Studio",
         "project.godot": "Godot",
         "export_presets.cfg": "Godot",
+        "Gemfile": "Ruby/Bundler",
+        "Gemfile.lock": "Ruby/Bundler",
+        "Rakefile": "Ruby/Bundler",
+        "AndroidManifest.xml": "Android Studio",
     }
     grouped: dict[Path, tuple[set[str], set[str]]] = {}
     for path in project_files(root, max_depth=5):
         kind = markers.get(path.name)
         if path.suffix.lower() in VISUAL_STUDIO_FILES:
             kind = "Visual Studio"
+        if path.suffix.lower() == ".gemspec":
+            kind = "Ruby/Bundler"
+        if path.suffix.lower() == ".iml":
+            kind = "JetBrains"
+        if path.suffix.lower() == ".java":
+            kind = "Java"
         if path.name.startswith("requirements") and path.suffix == ".txt":
             kind = "Python requirements"
         if not kind:
@@ -317,6 +345,11 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         types, files = grouped.setdefault(path.parent, (set(), set()))
         types.add(kind)
         files.add(path.name)
+    for directory_name in (".idea", ".fleet"):
+        if (root / directory_name).is_dir():
+            types, files = grouped.setdefault(root, (set(), set()))
+            types.add("JetBrains")
+            files.add(directory_name)
     return [(directory, sorted(types), sorted(files)) for directory, (types, files) in sorted(grouped.items(), key=lambda item: str(item[0]))]
 
 
