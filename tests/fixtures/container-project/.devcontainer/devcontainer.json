@@ -1,0 +1,4 @@
+{
+  "name": "Container Fixture",
+  "build": {"dockerfile": "../Dockerfile"}
+}

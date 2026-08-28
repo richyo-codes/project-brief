@@ -24,6 +24,7 @@ SCONS_FIXTURE = PROJECT / "tests" / "fixtures" / "scons-project"
 BAZEL_FIXTURE = PROJECT / "tests" / "fixtures" / "bazel-project"
 ZIG_FIXTURE = PROJECT / "tests" / "fixtures" / "zig-project"
 PLATFORMIO_FIXTURE = PROJECT / "tests" / "fixtures" / "platformio-project"
+CONTAINER_FIXTURE = PROJECT / "tests" / "fixtures" / "container-project"
 
 
 def main():
@@ -64,6 +65,8 @@ def main():
     assert "Zig" in zig_summary and "build.zig" in zig_summary and "zig build test" in zig_summary, zig_summary
     platformio_summary = subprocess.run([*TOOL, "--root", PLATFORMIO_FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "PlatformIO" in platformio_summary and "platformio.ini" in platformio_summary and "pio run" in platformio_summary, platformio_summary
+    container_summary = subprocess.run([*TOOL, "--root", CONTAINER_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Docker" in container_summary and "Containerfile" in container_summary and "Docker Compose" in container_summary and "Dev Container" in container_summary and "docker compose config" in container_summary, container_summary
     if shutil.which("fzf"):
         picked_script = subprocess.run([*TOOL, "--root", FIXTURE, "--fzf", "build-all"], text=True, capture_output=True, check=True).stdout.strip()
         assert picked_script == "scripts/build-all.sh:1", picked_script

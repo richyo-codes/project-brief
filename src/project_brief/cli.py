@@ -256,9 +256,18 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
         if (root / "configure").is_file() or (root / "configure.ac").is_file() or (root / "configure.in").is_file():
             commands.append(Command("./configure", "configure build"))
         commands.extend((Command("make", "build"), Command("make check", "test")))
-    if (root / "Dockerfile").is_file():
+    if (root / "Dockerfile").is_file() or (root / "Containerfile").is_file():
         systems.append("Docker")
-        commands.append(Command("docker build .", "build container"))
+        dockerfile = "Containerfile" if (root / "Containerfile").is_file() and not (root / "Dockerfile").is_file() else "Dockerfile"
+        build_command = "docker build ." if dockerfile == "Dockerfile" else "docker build -f Containerfile ."
+        commands.append(Command(build_command, "build container"))
+    compose_files = [root / filename for filename in ("compose.yml", "compose.yaml", "docker-compose.yml", "docker-compose.yaml") if (root / filename).is_file()]
+    if compose_files:
+        systems.append("Docker Compose")
+        commands.extend((Command("docker compose config", "validate configuration"), Command("docker compose build", "build services")))
+    devcontainer = root / ".devcontainer" / "devcontainer.json"
+    if devcontainer.is_file() or (root / "devcontainer.json").is_file():
+        systems.append("Dev Container")
     ruby_files = {"Gemfile", "Gemfile.lock", "Rakefile"}
     ruby_manifests = [path for path in root.iterdir() if path.is_file() and (path.name in ruby_files or path.suffix.lower() == ".gemspec")]
     if ruby_manifests:
@@ -350,6 +359,13 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         "build.zig": "Zig",
         "build.zig.zon": "Zig",
         "platformio.ini": "PlatformIO",
+        "Dockerfile": "Docker",
+        "Containerfile": "Docker",
+        "compose.yml": "Docker Compose",
+        "compose.yaml": "Docker Compose",
+        "docker-compose.yml": "Docker Compose",
+        "docker-compose.yaml": "Docker Compose",
+        "devcontainer.json": "Dev Container",
         "pubspec.yaml": "Flutter/Dart",
         "CMakeLists.txt": "CMake",
         "meson.build": "Meson",
