@@ -60,6 +60,8 @@ DOC_NAMES = ("README*", "INSTALL*", "DEVELOPMENT*", "CONTRIBUTING*", "AGENTS.md"
 AI_FILE_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".clinerules", ".roomodes", "copilot-instructions.md"}
 AI_RULE_DIRECTORIES = {".cursor/rules", ".windsurf/rules", ".clinerules", ".roo/rules", ".github/instructions"}
 IGNORED_DIRECTORIES = {".git", "node_modules", ".venv", "venv", ".dart_tool", "build", "dist", "target", "__pycache__"}
+SHELL_SCRIPT_EXTENSIONS = {".sh", ".bash", ".zsh", ".fish"}
+WINDOWS_SCRIPT_EXTENSIONS = {".ps1", ".bat", ".cmd"}
 VISUAL_STUDIO_FILES = {".sln", ".csproj", ".fsproj", ".vbproj", ".vcxproj"}
 
 
@@ -335,17 +337,30 @@ def just_commands(root: Path) -> list[Command]:
 
 def script_commands(root: Path) -> list[Command]:
     commands: list[Command] = []
-    for directory_name in ("scripts", "bin", "tool", "tools"):
+    script_directories = ("scripts", "bin", "tool", "tools")
+
+    def add_script(path: Path, description: str) -> None:
+        relative = path.relative_to(root)
+        suffix = path.suffix.lower()
+        if suffix == ".ps1":
+            commands.append(Command(f"powershell -File {relative}", description))
+        elif suffix in {".bat", ".cmd"}:
+            commands.append(Command(f"cmd /c {relative}", description))
+        elif path.stat().st_mode & 0o111:
+            commands.append(Command(f"./{relative}", description))
+        elif suffix in SHELL_SCRIPT_EXTENSIONS:
+            commands.append(Command(f"sh {relative}", "shell script"))
+
+    for path in sorted((item for item in root.iterdir() if item.is_file()), key=lambda item: item.name.lower()):
+        if path.stat().st_mode & 0o111 or path.suffix.lower() in SHELL_SCRIPT_EXTENSIONS | WINDOWS_SCRIPT_EXTENSIONS:
+            add_script(path, "root script")
+    for directory_name in script_directories:
         directory = root / directory_name
         if not directory.is_dir():
             continue
         description = "bin command" if directory_name == "bin" else "tool command" if directory_name in {"tool", "tools"} else "project script"
         for path in sorted((item for item in directory.iterdir() if item.is_file()), key=lambda item: item.name.lower()):
-            relative = path.relative_to(root)
-            if path.stat().st_mode & 0o111:
-                commands.append(Command(f"./{relative}", description))
-            elif path.suffix in {".sh", ".bash", ".zsh"}:
-                commands.append(Command(f"sh {relative}", "shell script"))
+            add_script(path, description)
     return commands
 
 
@@ -780,6 +795,9 @@ def fzf_entries(root: Path) -> list[str]:
             for path in scripts.iterdir():
                 kind = "script" if directory_name == "scripts" else "bin" if directory_name == "bin" else "tool"
                 add(path, kind)
+    for path in root.iterdir():
+        if path.is_file() and (path.stat().st_mode & 0o111 or path.suffix.lower() in SHELL_SCRIPT_EXTENSIONS | WINDOWS_SCRIPT_EXTENSIONS):
+            add(path, "root")
     for directory, _, files in components(root):
         for filename in files:
             add(directory / filename, "manifest")

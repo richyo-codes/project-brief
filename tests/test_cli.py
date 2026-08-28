@@ -76,6 +76,7 @@ def main():
         assert picked_tool == "tools/project-report.sh:1", picked_tool
     summary = subprocess.run([*TOOL, "--root", FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "## sample-project" in summary and "\n\ndocs" in summary and "\n\ncommands" in summary, summary
+    assert "powershell -File run.ps1" in summary and "cmd /c deploy.cmd" in summary, summary
     for expected in ("sample-project", "README.md", "docs/development.md", "Node.js (package.json)", "Just (justfile)", "npm run test", "make check", "just build", "launch-config list", "./scripts/build-all.sh", "sh scripts/generate.sh", "git hooks: .githooks", "git submodules: .gitmodules", "editor/IDE files: .idea, .vscode", "CI: .github/workflows", "local environment files: .env", "binary/artifact files: artifacts/demo.apk", "packages/web [Node.js]", "libs/engine [Rust/Cargo]", "services/api [Python requirements]", "native [CMake]"):
         assert expected in summary, summary
     grep = subprocess.run([*TOOL, "--root", FIXTURE, "--grep", "install"], text=True, capture_output=True, check=True).stdout
