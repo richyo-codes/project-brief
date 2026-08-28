@@ -46,7 +46,7 @@ class Render:
     def section(self, text: str) -> str:
         icon = {
             "docs": "📖 ", "systems": "⚙️  ", "launch": "🚀 ", "scripts": "🧰 ",
-            "components": "🧩 ", "notable": "⚠️  ", "commands": "▶️  ",
+            "components": "🧩 ", "notable": "⚠️  ", "branches": "🌿 ", "commands": "▶️  ",
         }.get(text, "") if self.icons else ""
         return self.style("1;34", icon + text)
 
@@ -227,6 +227,17 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
             commands.extend((Command("dotnet build", "build"), Command("dotnet test", "test")))
         if any(path.suffix.lower() == ".vcxproj" for path in visual_studio_files):
             commands.append(Command("msbuild", "build"))
+    godot_project = root / "project.godot"
+    if godot_project.is_file():
+        systems.append("Godot")
+        godot_text = godot_project.read_text(errors="ignore")
+        godot_name = re.search(r'^config/name="([^"]+)"$', godot_text, re.MULTILINE)
+        if godot_name:
+            name = godot_name.group(1)
+        commands.extend((
+            Command("godot --editor --path .", "open editor"),
+            Command("godot --headless --path . --quit", "validate project"),
+        ))
     return name, dedupe(commands), systems
 
 
@@ -291,6 +302,8 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         ".fsproj": "Visual Studio",
         ".vbproj": "Visual Studio",
         ".vcxproj": "Visual Studio",
+        "project.godot": "Godot",
+        "export_presets.cfg": "Godot",
     }
     grouped: dict[Path, tuple[set[str], set[str]]] = {}
     for path in project_files(root, max_depth=5):
@@ -475,6 +488,26 @@ def inspect_authors(root: Path) -> int:
     for author, count in counts.most_common():
         print(f"  {count:>4}  {author}")
     return 0
+
+
+def recent_branches(root: Path, limit: int = 5) -> list[str]:
+    result = subprocess.run(
+        [
+            "git", "-C", str(root), "for-each-ref", "--sort=-committerdate",
+            "--format=%(HEAD)\t%(refname:short)\t%(committerdate:relative)", "refs/heads",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode:
+        return []
+    branches: list[str] = []
+    for line in result.stdout.splitlines()[:limit]:
+        head, name, activity = line.split("\t", 2)
+        marker = "* " if head == "*" else "  "
+        branches.append(f"{marker}{name} ({activity})")
+    return branches
 
 
 def locked_packages(root: Path) -> list[LockedPackage]:
@@ -738,6 +771,7 @@ def main() -> int:
     docs = document_paths(root)
     task_files = task_entries(root)
     notables = notable_findings(root)
+    branches = recent_branches(root)
     print(f"{render.title(f'## {name or root.name}')}  {render.muted(f'({root})')}")
     if not args.compact and (docs or systems or task_files or scripts or found_components or notables):
         print()
@@ -751,6 +785,7 @@ def main() -> int:
     if len(found_components) > component_limit:
         print(f"{render.section('components')}  … {len(found_components) - component_limit} more; pass --components")
     print_section("notable", notables, render)
+    print_section("branches", branches, render)
     limit = len(commands) if args.all else 10
     if not args.compact and commands:
         print()

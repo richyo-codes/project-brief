@@ -10,17 +10,21 @@ FIXTURE = PROJECT / "tests" / "fixtures" / "sample-project"
 ECLIPSE_FIXTURE = PROJECT / "tests" / "fixtures" / "eclipse-project"
 VISUAL_STUDIO_FIXTURE = PROJECT / "tests" / "fixtures" / "visual-studio-project"
 NPM_SECURITY_FIXTURE = PROJECT / "tests" / "fixtures" / "npm-security-project"
+GODOT_FIXTURE = PROJECT / "tests" / "fixtures" / "godot-project"
 
 
 def main():
     project_summary = subprocess.run([*TOOL], text=True, capture_output=True, check=True).stdout
     assert "systems" in project_summary and "uv" in project_summary and "uv sync" in project_summary, project_summary
+    assert "branches" in project_summary, project_summary
     eclipse_summary = subprocess.run([*TOOL, "--root", ECLIPSE_FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "Eclipse" in eclipse_summary and ".project" in eclipse_summary, eclipse_summary
     visual_studio_summary = subprocess.run([*TOOL, "--root", VISUAL_STUDIO_FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "Visual Studio" in visual_studio_summary and "MyApp.csproj" in visual_studio_summary and "dotnet build" in visual_studio_summary, visual_studio_summary
     npm_security_summary = subprocess.run([*TOOL, "--root", NPM_SECURITY_FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "npm install scripts: 2 dependency script packages need review for npm v12" in npm_security_summary, npm_security_summary
+    godot_summary = subprocess.run([*TOOL, "--root", GODOT_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "## Godot Fixture" in godot_summary and "Godot" in godot_summary and "project.godot" in godot_summary and "godot --editor --path ." in godot_summary, godot_summary
     if shutil.which("fzf"):
         picked_script = subprocess.run([*TOOL, "--root", FIXTURE, "--fzf", "build-all"], text=True, capture_output=True, check=True).stdout.strip()
         assert picked_script == "scripts/build-all.sh:1", picked_script
