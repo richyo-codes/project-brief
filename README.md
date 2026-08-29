@@ -35,6 +35,27 @@ uv run python tests/test_cli.py
 
 Update the lockfile after changing project metadata or dependencies with `uv lock`.
 
+## Demo GIFs
+
+With [VHS](https://github.com/charmbracelet/vhs) installed, generate a short
+animated terminal inspection demo for any local checkout:
+
+```sh
+scripts/demo-gif.sh /path/to/project dist/project-brief-demo.gif
+```
+
+The GIF cycles through the project overview, recognized components, and an
+offline dependency-security inventory. VHS records the actual terminal
+interaction, including the typed commands and rendered output. The script only
+inspects the supplied directory; it does not clone or download a project.
+
+Good demo candidates include [uv](https://github.com/astral-sh/uv),
+[ripgrep](https://github.com/BurntSushi/ripgrep),
+[GitHub CLI](https://github.com/cli/cli),
+[Neovim](https://github.com/neovim/neovim), and
+[Godot](https://github.com/godotengine/godot). They exercise different
+language, build, IDE, CI, and dependency-lockfile detectors.
+
 ## Output contract
 
 File references should use `path:line` so VS Code and Zed terminals can open them with Ctrl/Cmd-click. The tool also supports OSC 8 links with `--links`.
