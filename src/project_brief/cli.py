@@ -155,6 +155,24 @@ def npm_script_policy_findings(root: Path) -> list[str]:
     return findings
 
 
+def dependency_override_findings(root: Path) -> list[str]:
+    findings: list[str] = []
+    for path in project_files(root, max_depth=5):
+        relative = path.relative_to(root)
+        if path.name == "pubspec.yaml":
+            text = path.read_text(errors="ignore")
+            if re.search(r"^dependency_overrides:\s*$", text, re.MULTILINE):
+                findings.append(f"Dart dependency overrides: {relative}")
+        elif path.name == "pubspec_overrides.yaml":
+            findings.append(f"Dart dependency overrides: {relative}")
+        elif path.name == "go.mod":
+            text = path.read_text(errors="ignore")
+            if re.search(r"^\s*replace(?:\s|\()", text, re.MULTILINE):
+                replacements = len(re.findall(r"=>", text))
+                findings.append(f"Go module replacements: {relative} ({replacements} replace directive{'s' if replacements != 1 else ''})")
+    return findings
+
+
 def uses_uv(root: Path) -> bool:
     if (root / "uv.lock").is_file():
         return True
@@ -203,7 +221,7 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
     if (root / "Cargo.toml").is_file():
         systems.append("Rust (Cargo)")
         commands.extend((Command("cargo build", "build"), Command("cargo test", "test"), Command("cargo run", "run")))
-    if (root / "go.mod").is_file():
+    if (root / "go.mod").is_file() or (root / "go.work").is_file():
         systems.append("Go modules")
         commands.extend((Command("go build ./...", "build"), Command("go test ./...", "test"), Command("go run .", "run")))
     if (root / "build.zig").is_file() or (root / "build.zig.zon").is_file():
@@ -371,9 +389,12 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         "pyproject.toml": "Python",
         "setup.py": "Python",
         "go.mod": "Go modules",
+        "go.work": "Go modules",
+        "go.work.sum": "Go modules",
         "build.zig": "Zig",
         "build.zig.zon": "Zig",
         "platformio.ini": "PlatformIO",
+        "pubspec_overrides.yaml": "Flutter/Dart",
         "Dockerfile": "Docker",
         "Containerfile": "Docker",
         "compose.yml": "Docker Compose",
@@ -542,6 +563,7 @@ def notable_findings(root: Path) -> list[str]:
     if (root / ".gitattributes").is_file() and "filter=lfs" in (root / ".gitattributes").read_text(errors="ignore"):
         findings.append("Git LFS: .gitattributes")
     findings.extend(npm_script_policy_findings(root))
+    findings.extend(dependency_override_findings(root))
 
     artifact_extensions = {".a", ".aab", ".apk", ".dll", ".dylib", ".exe", ".img", ".ipa", ".iso", ".jar", ".o", ".qcow2", ".so", ".wasm", ".zip"}
     artifacts: list[str] = []

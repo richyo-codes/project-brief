@@ -1,0 +1,3 @@
+dependency_overrides:
+  local_package:
+    path: ../local_package

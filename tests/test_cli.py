@@ -25,6 +25,8 @@ BAZEL_FIXTURE = PROJECT / "tests" / "fixtures" / "bazel-project"
 ZIG_FIXTURE = PROJECT / "tests" / "fixtures" / "zig-project"
 PLATFORMIO_FIXTURE = PROJECT / "tests" / "fixtures" / "platformio-project"
 CONTAINER_FIXTURE = PROJECT / "tests" / "fixtures" / "container-project"
+DART_OVERRIDE_FIXTURE = PROJECT / "tests" / "fixtures" / "dart-override-project"
+GO_OVERRIDE_FIXTURE = PROJECT / "tests" / "fixtures" / "go-override-project"
 
 
 def main():
@@ -67,6 +69,10 @@ def main():
     assert "PlatformIO" in platformio_summary and "platformio.ini" in platformio_summary and "pio run" in platformio_summary, platformio_summary
     container_summary = subprocess.run([*TOOL, "--root", CONTAINER_FIXTURE], text=True, capture_output=True, check=True).stdout
     assert "Docker" in container_summary and "Containerfile" in container_summary and "Docker Compose" in container_summary and "Dev Container" in container_summary and "docker compose config" in container_summary, container_summary
+    dart_override_summary = subprocess.run([*TOOL, "--root", DART_OVERRIDE_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Dart dependency overrides" in dart_override_summary and "pubspec_overrides.yaml" in dart_override_summary, dart_override_summary
+    go_override_summary = subprocess.run([*TOOL, "--root", GO_OVERRIDE_FIXTURE], text=True, capture_output=True, check=True).stdout
+    assert "Go module replacements" in go_override_summary and "1 replace directive" in go_override_summary, go_override_summary
     if shutil.which("fzf"):
         picked_script = subprocess.run([*TOOL, "--root", FIXTURE, "--fzf", "build-all"], text=True, capture_output=True, check=True).stdout.strip()
         assert picked_script == "scripts/build-all.sh:1", picked_script

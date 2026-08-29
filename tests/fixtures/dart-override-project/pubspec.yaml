@@ -1,0 +1,7 @@
+name: dart_override_fixture
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependency_overrides:
+  local_package: ^1.0.0
