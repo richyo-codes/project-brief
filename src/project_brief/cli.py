@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,13 +57,22 @@ class Render:
     def muted(self, text: str) -> str:
         return self.style("2", text)
 
-DOC_NAMES = ("README*", "INSTALL*", "DEVELOPMENT*", "CONTRIBUTING*", "AGENTS.md", "CLAUDE.md", "ARCHITECTURE*")
+DOC_NAMES = (
+    "README*", "INSTALL*", "USAGE*", "DEVELOPMENT*", "CONTRIBUTING*", "AGENTS.md", "CLAUDE.md", "ARCHITECTURE*",
+    "TEST.md", "TESTING.md", "test.md", "testing.md", "Testing.md", "Testing*.md",
+)
 AI_FILE_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".clinerules", ".roomodes", "copilot-instructions.md"}
 AI_RULE_DIRECTORIES = {".cursor/rules", ".windsurf/rules", ".clinerules", ".roo/rules", ".github/instructions"}
 IGNORED_DIRECTORIES = {".git", "node_modules", ".venv", "venv", ".dart_tool", "build", "dist", "target", "__pycache__"}
 SHELL_SCRIPT_EXTENSIONS = {".sh", ".bash", ".zsh", ".fish"}
 WINDOWS_SCRIPT_EXTENSIONS = {".ps1", ".bat", ".cmd"}
 VISUAL_STUDIO_FILES = {".sln", ".csproj", ".fsproj", ".vbproj", ".vcxproj"}
+SHELL_FENCE_LANGUAGES = {"", "bash", "console", "sh", "shell", "zsh"}
+COMMAND_PREFIXES = (
+    "bun", "cargo", "cmake", "curl", "deno", "docker", "dotnet", "flutter", "git", "go", "gradle",
+    "make", "mvn", "npm", "npx", "pip", "poetry", "pnpm", "project-brief", "pytest", "python", "ruby",
+    "sh", "just", "uv", "yarn", "./", "../",
+)
 
 
 def existing(root: Path, names: tuple[str, ...]) -> list[Path]:
@@ -88,6 +98,46 @@ def ai_paths(root: Path) -> list[Path]:
         if path.name in AI_FILE_NAMES or any(relative_directory == directory or relative_directory.startswith(f"{directory}/") for directory in AI_RULE_DIRECTORIES):
             found.append(path)
     return sorted(found, key=lambda path: str(path).lower())
+
+
+def is_shell_command(line: str) -> bool:
+    """Return whether a Markdown code example looks like a shell command."""
+    candidate = line.strip()
+    if candidate.startswith(("$ ", "> ")):
+        candidate = candidate[2:].lstrip()
+    if not candidate or candidate.startswith(("#", ">")):
+        return False
+    first_word = candidate.split(maxsplit=1)[0]
+    return first_word.startswith(("./", "../")) or first_word in {prefix.strip() for prefix in COMMAND_PREFIXES}
+
+
+def markdown_commands(root: Path) -> list[Command]:
+    """Extract shell examples from root README, INSTALL, and USAGE documents."""
+    commands: list[Command] = []
+    for path in existing(root, ("README*", "INSTALL*", "USAGE*")):
+        lines = path.read_text(errors="ignore").splitlines()
+        in_fence = False
+        fence_language = ""
+        for line_number, line in enumerate(lines, start=1):
+            fence = re.match(r"^\s*(`{3,}|~{3,})\s*([\w+-]*)", line)
+            if fence:
+                if not in_fence:
+                    in_fence = True
+                    fence_language = fence.group(2).lower()
+                else:
+                    in_fence = False
+                continue
+            if in_fence:
+                if fence_language in SHELL_FENCE_LANGUAGES and is_shell_command(line):
+                    command = line.strip()
+                    if command.startswith(("$ ", "> ")):
+                        command = command[2:].lstrip()
+                    commands.append(Command(command, f"{path.name}:{line_number} example"))
+                continue
+            for match in re.finditer(r"(?P<ticks>`{1,3})(?P<text>[^`\n]+?)(?P=ticks)", line):
+                if is_shell_command(match.group("text")):
+                    commands.append(Command(match.group("text").strip(), f"{path.name}:{line_number} example"))
+    return dedupe(commands)
 
 
 def read_json(path: Path) -> dict:
@@ -186,6 +236,138 @@ def uses_uv(root: Path) -> bool:
     return isinstance(data, dict) and isinstance(data.get("tool"), dict) and "uv" in data["tool"]
 
 
+def flutter_workspace_members(root: Path) -> list[Path]:
+    """Return declared Dart workspace packages, ignoring generated and vendored trees."""
+    pubspec = root / "pubspec.yaml"
+    if not pubspec.is_file():
+        return []
+    lines = pubspec.read_text(errors="ignore").splitlines()
+    members: list[Path] = []
+    in_workspace = False
+    for line in lines:
+        if re.match(r"^workspace:\s*$", line):
+            in_workspace = True
+            continue
+        if in_workspace:
+            match = re.match(r"^\s+-\s+([^#]+?)\s*$", line)
+            if match:
+                member = match.group(1).strip().strip("'\"")
+                path = root / member
+                if (path / "pubspec.yaml").is_file():
+                    members.append(path)
+                continue
+            if line.strip() and not line.lstrip().startswith("#"):
+                break
+    return sorted(set(members), key=lambda path: str(path.relative_to(root)).lower())
+
+
+def gn_output_directories(root: Path, max_depth: int = 4) -> list[Path]:
+    """Find configured GN output directories without walking generated output."""
+    outputs: list[Path] = []
+    for current, directories, _ in os.walk(root):
+        current_path = Path(current)
+        relative = current_path.relative_to(root)
+        if len(relative.parts) >= max_depth:
+            directories[:] = []
+            continue
+        directories[:] = [directory for directory in directories if directory not in IGNORED_DIRECTORIES]
+        if "out" not in directories:
+            continue
+        directories.remove("out")
+        output_root = current_path / "out"
+        try:
+            candidates = list(output_root.iterdir())
+        except OSError:
+            continue
+        outputs.extend(path for path in candidates if path.is_dir() and (path / "args.gn").is_file())
+    return sorted(set(outputs), key=lambda path: str(path.relative_to(root)).lower())
+
+
+def flutter_gn_wrapper(root: Path) -> Path | None:
+    wrapper = root / "engine" / "src" / "flutter" / "tools" / "gn"
+    return wrapper if wrapper.is_file() else None
+
+
+def flutter_gn_commands(root: Path) -> tuple[Path | None, list[Command]]:
+    wrapper = flutter_gn_wrapper(root)
+    if not wrapper:
+        return None, []
+    relative = wrapper.relative_to(root)
+    prefix = f"python3 {relative}"
+    modes = re.search(r"--runtime-mode[\s\S]{0,300}?choices=\[([^]]+)\]", wrapper.read_text(errors="ignore"))
+    runtime_modes = re.findall(r"['\"]([A-Za-z0-9_-]+)['\"]", modes.group(1)) if modes else ["debug", "profile", "release"]
+    commands = [Command(f"{prefix} --help", "show Flutter engine GN options")]
+    commands.extend(Command(f"{prefix} --runtime-mode {mode}", f"generate {mode} engine GN files") for mode in runtime_modes)
+    return wrapper, commands
+
+
+def aosp_project(root: Path) -> bool:
+    return (root / "build" / "envsetup.sh").is_file() or (
+        (root / "build" / "soong").is_dir() and (root / "Android.bp").is_file()
+    ) or (root / ".repo" / "manifest.xml").is_file()
+
+
+def yocto_configurations(root: Path, max_depth: int = 4) -> list[Path]:
+    configurations: list[Path] = []
+    for current, directories, files in os.walk(root):
+        current_path = Path(current)
+        relative = current_path.relative_to(root)
+        if len(relative.parts) >= max_depth:
+            directories[:] = []
+        directories[:] = [directory for directory in directories if directory not in IGNORED_DIRECTORIES - {"build"}]
+        if "local.conf" in files and "bblayers.conf" in files and current_path.name == "conf":
+            configurations.append(current_path.parent)
+    return sorted(set(configurations), key=lambda path: str(path.relative_to(root)).lower())
+
+
+def makefile_variable(path: Path, name: str) -> str | None:
+    if not path.is_file():
+        return None
+    match = re.search(rf"^\s*{re.escape(name)}\s*(?:\?|\+)?=\s*\"?([^\"#\n]+)", path.read_text(errors="ignore"), re.MULTILINE)
+    return match.group(1).strip() if match else None
+
+
+def buildroot_project(root: Path) -> bool:
+    return (root / "Config.in").is_file() and (root / "package").is_dir() and (root / "configs").is_dir()
+
+
+def dagger_project(root: Path) -> bool:
+    return any((root / filename).is_file() for filename in ("dagger.json", "dagger.toml", "dagger-module.toml")) or (root / ".dagger").is_dir()
+
+
+def ansible_files(root: Path) -> tuple[list[Path], list[Path]]:
+    playbooks: list[Path] = []
+    configs: list[Path] = []
+    for path in project_files(root, max_depth=3):
+        if path.name in {"ansible.cfg", ".ansible-lint", "requirements.yml", "requirements.yaml"}:
+            configs.append(path)
+        elif path.suffix.lower() in {".yml", ".yaml"}:
+            text = path.read_text(errors="ignore")
+            if re.search(r"^\s*(hosts|tasks|roles|collections):", text, re.MULTILINE):
+                playbooks.append(path)
+    return sorted(set(playbooks)), sorted(set(configs))
+
+
+def kubernetes_files(root: Path) -> tuple[list[Path], list[Path], list[Path]]:
+    manifests: list[Path] = []
+    kustomizations: list[Path] = []
+    charts: list[Path] = []
+    for path in project_files(root, max_depth=3):
+        if path.name in {"kustomization.yaml", "kustomization.yml"}:
+            kustomizations.append(path)
+        elif path.name == "Chart.yaml" or path.name in {"helmfile.yaml", "helmfile.yml"}:
+            charts.append(path)
+        elif path.suffix.lower() in {".yml", ".yaml"}:
+            text = path.read_text(errors="ignore")
+            if re.search(r"^apiVersion:\s*\S+", text, re.MULTILINE) and re.search(r"^kind:\s*\S+", text, re.MULTILINE):
+                manifests.append(path)
+    return sorted(set(manifests)), sorted(set(kustomizations)), sorted(set(charts))
+
+
+def nix_project(root: Path) -> bool:
+    return any((root / filename).is_file() for filename in ("flake.nix", "flake.lock", "shell.nix", "default.nix"))
+
+
 def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]:
     commands: list[Command] = []
     systems: list[str] = []
@@ -221,25 +403,138 @@ def manifest_commands(root: Path) -> tuple[str | None, list[Command], list[str]]
     if (root / "Cargo.toml").is_file():
         systems.append("Rust (Cargo)")
         commands.extend((Command("cargo build", "build"), Command("cargo test", "test"), Command("cargo run", "run")))
+    is_dagger = dagger_project(root)
     if (root / "go.mod").is_file() or (root / "go.work").is_file():
-        systems.append("Go modules")
-        commands.extend((Command("go build ./...", "build"), Command("go test ./...", "test"), Command("go run .", "run")))
+        systems.append("Go modules" if not is_dagger else "Go modules (Dagger module)")
+        if not is_dagger:
+            commands.extend((Command("go build ./...", "build"), Command("go test ./...", "test"), Command("go run .", "run")))
     if (root / "build.zig").is_file() or (root / "build.zig.zon").is_file():
         systems.append("Zig")
         commands.extend((Command("zig build", "build"), Command("zig build test", "test")))
+    root_gn = (root / ".gn").is_file() or (root / "BUILD.gn").is_file()
+    gn_outputs = gn_output_directories(root)
+    if root_gn or gn_outputs:
+        label = "GN" if not gn_outputs else f"GN ({len(gn_outputs)} configured outputs)"
+        systems.append(label)
+        if root_gn:
+            commands.extend((
+                Command("gn gen out", "generate Ninja files"),
+                Command("gn check out", "check target dependencies"),
+                Command("ninja -C out", "build generated targets"),
+            ))
+        for output in gn_outputs:
+            relative = output.relative_to(root)
+            commands.append(Command(f"ninja -C {relative}", "build configured GN output"))
+    flutter_wrapper, flutter_commands = flutter_gn_commands(root)
+    if flutter_wrapper:
+        systems.append("Flutter engine GN wrapper")
+        commands.extend(flutter_commands)
+    if aosp_project(root):
+        systems.append("AOSP / Soong")
+        commands.extend((
+            Command("source build/envsetup.sh", "initialize AOSP build environment"),
+            Command("lunch <product>-<variant>", "select AOSP product and variant"),
+            Command("m", "build selected AOSP target"),
+            Command("atest", "run AOSP tests"),
+        ))
+    yocto_builds = yocto_configurations(root)
+    if (root / "oe-init-build-env").is_file() or yocto_builds:
+        details = []
+        if yocto_builds:
+            details.append(f"{len(yocto_builds)} configured build directories")
+            local_conf = yocto_builds[0] / "conf" / "local.conf"
+            machine = makefile_variable(local_conf, "MACHINE")
+            distro = makefile_variable(local_conf, "DISTRO")
+            if machine:
+                details.append(f"MACHINE={machine}")
+            if distro:
+                details.append(f"DISTRO={distro}")
+        systems.append("Yocto / OpenEmbedded" + (f" ({', '.join(details)})" if details else ""))
+        if (root / "oe-init-build-env").is_file():
+            commands.append(Command("source oe-init-build-env <build-dir>", "initialize BitBake environment"))
+        commands.extend((
+            Command("bitbake-layers show-layers", "list configured Yocto layers"),
+            Command("bitbake <image-target>", "build a configured image"),
+        ))
+    if buildroot_project(root):
+        systems.append("Buildroot")
+        commands.extend((
+            Command("make menuconfig", "configure Buildroot"),
+            Command("make", "build configured root filesystem"),
+            Command("make savedefconfig", "save minimal configuration"),
+            Command("make legal-info", "collect license information"),
+        ))
+    if is_dagger:
+        systems.append("Dagger module")
+        commands.extend((
+            Command("dagger functions", "list module functions"),
+            Command("dagger call <function>", "call a module function"),
+            Command("dagger develop", "generate/update module development files"),
+        ))
+    playbooks, ansible_configs = ansible_files(root)
+    if playbooks or ansible_configs:
+        systems.append(f"Ansible ({len(playbooks)} playbooks)")
+        if (root / "requirements.yml").is_file() or (root / "requirements.yaml").is_file():
+            requirements = "requirements.yml" if (root / "requirements.yml").is_file() else "requirements.yaml"
+            commands.append(Command(f"ansible-galaxy install -r {requirements}", "install Ansible collections/roles"))
+        commands.extend((
+            Command("ansible-inventory --list", "inspect inventory"),
+            Command("ansible-playbook <playbook>", "run an Ansible playbook"),
+        ))
+        if (root / ".ansible-lint").is_file() or shutil.which("ansible-lint"):
+            commands.append(Command("ansible-lint", "lint Ansible content"))
+    manifests, kustomizations, charts = kubernetes_files(root)
+    if manifests or kustomizations or charts:
+        details = []
+        if manifests:
+            details.append(f"{len(manifests)} manifests")
+        if kustomizations:
+            details.append(f"{len(kustomizations)} Kustomize roots")
+        if charts:
+            details.append(f"{len(charts)} Helm files")
+        systems.append("Kubernetes" + (f" ({', '.join(details)})" if details else ""))
+        commands.extend((
+            Command("kubectl apply --dry-run=client -f .", "validate Kubernetes manifests"),
+            Command("kubectl diff -f .", "review cluster changes"),
+        ))
+        if kustomizations:
+            commands.append(Command("kubectl kustomize .", "render Kustomize output"))
+        if any(path.name == "Chart.yaml" for path in charts):
+            commands.extend((Command("helm lint .", "lint Helm chart"), Command("helm template .", "render Helm chart")))
+    if nix_project(root):
+        flake = (root / "flake.nix").is_file()
+        systems.append("Nix flakes" if flake else "Nix")
+        if flake:
+            commands.extend((
+                Command("nix develop", "enter the project development shell"),
+                Command("nix flake show", "list flake inputs and outputs"),
+                Command("nix flake check", "check flake outputs"),
+                Command("nix build", "build the default flake output"),
+            ))
+        else:
+            commands.append(Command("nix-shell", "enter the project development shell"))
     if (root / "platformio.ini").is_file():
         systems.append("PlatformIO")
         commands.extend((Command("pio run", "build embedded project"), Command("pio test", "run tests")))
     if (root / "pubspec.yaml").is_file():
-        systems.append("Flutter/Dart (pubspec.yaml)")
-        commands.extend((
-            Command("flutter pub get", "install dependencies"),
-            Command("flutter analyze", "analyze"),
-            Command("flutter test", "test"),
-            Command("flutter run", "run on a selected target"),
-            Command("flutter build linux", "build Linux app"),
-            Command("flutter build apk", "build Android APK"),
-        ))
+        workspace_members = flutter_workspace_members(root)
+        if workspace_members:
+            systems.append(f"Dart workspace ({len(workspace_members) + 1} packages)")
+            commands.extend((
+                Command("dart pub get", "resolve workspace dependencies"),
+                Command("dart analyze", "analyze workspace"),
+                Command("dart test", "run Dart tests"),
+            ))
+        else:
+            systems.append("Flutter/Dart (pubspec.yaml)")
+            commands.extend((
+                Command("flutter pub get", "install dependencies"),
+                Command("flutter analyze", "analyze"),
+                Command("flutter test", "test"),
+                Command("flutter run", "run on a selected target"),
+                Command("flutter build linux", "build Linux app"),
+                Command("flutter build apk", "build Android APK"),
+            ))
     if (root / "pom.xml").is_file():
         systems.append("Maven")
         commands.extend((Command("mvn package", "build"), Command("mvn test", "test")))
@@ -382,7 +677,7 @@ def script_commands(root: Path) -> list[Command]:
     return commands
 
 
-def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
+def components(root: Path, max_depth: int = 5) -> list[tuple[Path, list[str], list[str]]]:
     markers = {
         "Cargo.toml": "Rust/Cargo",
         "package.json": "Node.js",
@@ -393,6 +688,8 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         "go.work.sum": "Go modules",
         "build.zig": "Zig",
         "build.zig.zon": "Zig",
+        ".gn": "GN",
+        "BUILD.gn": "GN",
         "platformio.ini": "PlatformIO",
         "pubspec_overrides.yaml": "Flutter/Dart",
         "Dockerfile": "Docker",
@@ -434,14 +731,47 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
         "WORKSPACE.bazel": "Bazel",
         "BUILD": "Bazel",
         "BUILD.bazel": "Bazel",
+        "Android.bp": "AOSP / Soong",
+        "Android.mk": "AOSP / Make",
+        "oe-init-build-env": "Yocto / OpenEmbedded",
+        "Config.in": "Buildroot",
+        "dagger.json": "Dagger",
+        "dagger.toml": "Dagger",
+        "dagger-module.toml": "Dagger",
+        "ansible.cfg": "Ansible",
+        ".ansible-lint": "Ansible",
+        "requirements.yml": "Ansible",
+        "requirements.yaml": "Ansible",
+        "kustomization.yaml": "Kubernetes / Kustomize",
+        "kustomization.yml": "Kubernetes / Kustomize",
+        "Chart.yaml": "Kubernetes / Helm",
+        "helmfile.yaml": "Kubernetes / Helmfile",
+        "helmfile.yml": "Kubernetes / Helmfile",
+        "flake.nix": "Nix flakes",
+        "flake.lock": "Nix flakes",
+        "shell.nix": "Nix",
+        "default.nix": "Nix",
         "conanfile.py": "Conan",
         "conanfile.txt": "Conan",
         "conan.lock": "Conan",
         "vcpkg.json": "vcpkg",
         "vcpkg-configuration.json": "vcpkg",
     }
+    workspace_members = flutter_workspace_members(root)
     grouped: dict[Path, tuple[set[str], set[str]]] = {}
-    for path in project_files(root, max_depth=5):
+    if workspace_members:
+        source_paths = [root / "pubspec.yaml", *(path / "pubspec.yaml" for path in workspace_members)]
+        source_paths.extend(
+            path for path in project_files(root, max_depth=min(3, max_depth + 1))
+            if path.name in {".gn", "BUILD.gn"}
+        )
+    else:
+        source_paths = project_files(root, max_depth=max_depth + 1)
+    for path in source_paths:
+        if in_backup_directory(path, root):
+            continue
+        if len(path.relative_to(root).parts) - 1 > max_depth:
+            continue
         kind = markers.get(path.name)
         if path.suffix.lower() in VISUAL_STUDIO_FILES:
             kind = "Visual Studio"
@@ -449,6 +779,8 @@ def components(root: Path) -> list[tuple[Path, list[str], list[str]]]:
             kind = "Ruby/Bundler"
         if path.suffix.lower() == ".iml":
             kind = "JetBrains"
+        if path.suffix.lower() == ".gni":
+            kind = "GN"
         if path.suffix.lower() == ".java":
             kind = "Java"
         if path.name.startswith("requirements") and path.suffix == ".txt":
@@ -474,13 +806,42 @@ def component_label(root: Path, component: tuple[Path, list[str], list[str]], li
     return f"{location} [{', '.join(types)}]  {manifest_references}"
 
 
-def inspect_components(root: Path, links: bool) -> int:
-    found = components(root)
+def in_backup_directory(path: Path, root: Path) -> bool:
+    return any(part.startswith(".backup") for part in path.relative_to(root).parts[:-1])
+
+
+def inspect_components(root: Path, links: bool, max_depth: int = 5) -> int:
+    found = components(root, max_depth)
     if not found:
         print("project-brief: no recognized subproject or library manifests found", file=sys.stderr)
         return 1
     for component in found:
         print(component_label(root, component, links))
+    return 0
+
+
+def inspect_gn(root: Path, links: bool) -> int:
+    roots = [path for path in (root / ".gn", root / "BUILD.gn") if path.is_file()]
+    outputs = gn_output_directories(root)
+    flutter_wrapper, flutter_commands = flutter_gn_commands(root)
+    if not roots and not outputs and not flutter_wrapper:
+        print("project-brief: no GN root or configured GN output found", file=sys.stderr)
+        return 1
+    if flutter_wrapper:
+        print(f"Flutter engine GN wrapper: {link(flutter_wrapper, root, links)}")
+        print("  " + " · ".join(command.command for command in flutter_commands))
+    if roots:
+        print("GN root: " + ", ".join(link(path, root, links) for path in roots))
+    if outputs:
+        print(f"configured GN outputs: {len(outputs)}")
+        for output in outputs:
+            relative = output.relative_to(root)
+            print(f"  {link(output / 'args.gn', root, links)}")
+            print(f"    gn args {relative} --list")
+            print(f"    gn ls {relative} //...")
+            print(f"    ninja -C {relative}")
+    else:
+        print("No configured output found; create one with: gn gen out")
     return 0
 
 
@@ -768,6 +1129,55 @@ def dedupe(commands: list[Command]) -> list[Command]:
     return result
 
 
+def documented_commands(root: Path) -> list[Command]:
+    commands: list[Command] = []
+    shell_languages = {"bash", "console", "fish", "ps1", "sh", "shell", "shellsession", "terminal", "zsh"}
+    for document in document_paths(root):
+        lines = document.read_text(errors="ignore").splitlines()
+        in_block = False
+        language = ""
+        pending = ""
+        for line_number, line in enumerate(lines, start=1):
+            fence = re.match(r"^\s*```\s*([A-Za-z0-9_-]*)\s*$", line)
+            if fence:
+                if in_block:
+                    in_block = False
+                    pending = ""
+                elif fence.group(1).lower() in shell_languages:
+                    in_block = True
+                    language = fence.group(1).lower()
+                continue
+            if not in_block or line.strip().startswith("#"):
+                continue
+            command = line.strip()
+            if language in {"console", "shellsession", "terminal"}:
+                prompt = re.match(r"^(?:\$|#|>)\s+(.+)$", command)
+                if not prompt:
+                    continue
+                command = prompt.group(1)
+            if command.endswith("\\"):
+                pending = f"{pending}{command[:-1].rstrip()} "
+                continue
+            command = f"{pending}{command}".strip()
+            pending = ""
+            if command and not command.startswith(("...", "<", "[")):
+                commands.append(Command(command, f"documented in {document.relative_to(root)}:{line_number}"))
+    return dedupe(commands)
+
+
+def discovered_commands(root: Path, include_docs: bool = False) -> list[Command]:
+    """Collect the commands shown in the summary, without rendering a brief."""
+    _, commands, _ = manifest_commands(root)
+    commands.extend(make_commands(root))
+    just = just_commands(root)
+    if just:
+        commands.extend(just)
+    commands.extend(script_commands(root))
+    if include_docs:
+        commands.extend(documented_commands(root))
+    return dedupe(commands)
+
+
 def link(path: Path, root: Path, enabled: bool, line: int = 1) -> str:
     label = f"{path.relative_to(root)}:{line}"
     if not enabled:
@@ -775,9 +1185,46 @@ def link(path: Path, root: Path, enabled: bool, line: int = 1) -> str:
     return f"\033]8;;file://{path}#L{line}\033\\{label}\033]8;;\033\\"
 
 
-def print_section(title: str, lines: list[str], render: Render) -> None:
+def display_width(text: str) -> int:
+    text = re.sub(r"\x1b\][^\x07]*?(?:\x07|\x1b\\)", "", text)
+    text = re.sub(r"\x1b\[[0-9;]*m", "", text)
+    return sum(0 if unicodedata.combining(char) else 2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in text)
+
+
+def print_commands(commands: list[Command], render: Render, indent: str = "") -> None:
+    width = min(max((display_width(item.command) for item in commands), default=28), 48)
+    width = max(28, width)
+    for item in commands:
+        padding = " " * max(2, width - display_width(item.command) + 2)
+        if display_width(item.command) > width:
+            print(indent + render.command(item.command))
+            print(indent + "  " + render.muted(item.description))
+        else:
+            print(indent + render.command(item.command) + padding + render.muted(item.description))
+
+
+def print_section(title: str, lines: list[str], render: Render, columns: int = 0) -> None:
     if lines:
-        print(f"{render.section(title)}  " + " · ".join(lines))
+        if columns <= 0:
+            prefix = f"{render.section(title)}  "
+            continuation = " " * display_width(prefix)
+            row = prefix
+            terminal_width = shutil.get_terminal_size((100, 24)).columns
+            for item in lines:
+                separator = "" if row == prefix or row == continuation else " · "
+                if separator and display_width(row + separator + item) > terminal_width:
+                    print(row)
+                    row = continuation + item
+                else:
+                    row += separator + item
+            print(row)
+            return
+        print(render.section(title))
+        width = max(map(display_width, lines)) + 2
+        for start in range(0, len(lines), columns):
+            row = lines[start:start + columns]
+            padding = [item + " " * (width - display_width(item)) for item in row[:-1]]
+            print("  " + "".join([*padding, row[-1]]))
 
 
 def compact(items: list[str], limit: int = 8) -> list[str]:
@@ -857,6 +1304,40 @@ def pick_with_fzf(root: Path, query: str | None) -> int:
     return 0
 
 
+def pick_command_with_fzf(root: Path, query: str | None, commands: list[Command]) -> int:
+    fzf = shutil.which("fzf")
+    if not fzf:
+        print("project-brief: fzf is required for --commands --fzf; install fzf and try again", file=sys.stderr)
+        return 2
+    if not commands:
+        print("project-brief: no commands found", file=sys.stderr)
+        return 1
+    entries = [f"{command.command}\t{command.command}  # {command.description}" for command in commands]
+    fzf_command = [fzf, "--delimiter", "\t", "--with-nth", "2..", "--prompt", "run command> "]
+    if query:
+        fzf_command.extend(("--filter", query))
+    result = subprocess.run(fzf_command, input="\n".join(entries) + "\n", text=True, capture_output=True, check=False)
+    if result.returncode == 130:
+        return 1
+    if result.returncode:
+        print(f"project-brief: fzf failed: {result.stderr.strip()}", file=sys.stderr)
+        return result.returncode
+    selected = result.stdout.splitlines()
+    if not selected:
+        return 1
+    selected_command = selected[0].split("\t", 1)[0]
+    print(f"Selected: {selected_command}")
+    try:
+        answer = input("Run this command? [y/N] ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return 1
+    if answer not in {"y", "yes"}:
+        print("Not run.")
+        return 0
+    return subprocess.call(selected_command, shell=True, cwd=root)
+
+
 def view_document(root: Path, selection: str | None) -> int:
     docs = document_paths(root)
     if not docs:
@@ -888,19 +1369,28 @@ def main() -> int:
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="project root (default: current directory)")
     parser.add_argument("--grep", metavar="REGEX", help="search discovered project docs")
     parser.add_argument("--fzf", nargs="?", const="", metavar="QUERY", help="pick a discovered file with fzf and print its path:line")
+    parser.add_argument("--commands", action="store_true", help="list all recognized commands; combine with --fzf to select and confirm one to run")
+    parser.add_argument("--docs", action="store_true", help="with --commands, include shell commands found in project documentation")
     parser.add_argument("--view", nargs="?", const="", metavar="DOC", help="view README or a discovered document (uses glow when available)")
     parser.add_argument("--ci", action="store_true", help="inspect CI/CD configuration files")
     parser.add_argument("--authors", action="store_true", help="count unique Git commit authors")
     parser.add_argument("--components", action="store_true", help="list project and subproject build manifests")
+    parser.add_argument("--component-depth", type=int, default=5, metavar="N", help="limit component discovery to N directory levels (default: 5)")
+    parser.add_argument("--gn", action="store_true", help="inspect GN roots and configured build outputs")
     parser.add_argument("--ai", action="store_true", help="list AI/LLM instruction and context files")
     parser.add_argument("--security", action="store_true", help="query OSV for vulnerabilities in locked dependency versions")
     parser.add_argument("--offline", action="store_true", help="with --security, inventory lockfiles without a network request")
     parser.add_argument("--all", action="store_true", help="show every detected command, not just the most useful")
     parser.add_argument("--compact", action="store_true", help="omit blank lines between summary sections")
+    parser.add_argument("--columns", type=int, metavar="N", help="lay list sections out in N columns (1 = one item per line)")
     parser.add_argument("--links", action="store_true", help="emit OSC 8 hyperlinks for compatible terminals")
     parser.add_argument("--color", choices=("auto", "always", "never"), default="auto", help="terminal color mode (default: auto)")
     parser.add_argument("--icons", action="store_true", help="prefix summary sections with emoji")
     args = parser.parse_args()
+    if args.columns is not None and args.columns < 1:
+        parser.error("--columns must be at least 1")
+    if args.component_depth < 0:
+        parser.error("--component-depth must be at least 0")
     color = args.color == "always" or (args.color == "auto" and sys.stdout.isatty() and "NO_COLOR" not in os.environ)
     render = Render(color=color, icons=args.icons)
     root = args.root.resolve()
@@ -909,6 +1399,12 @@ def main() -> int:
         return 2
     if args.grep:
         return grep_docs(root, args.grep, args.links)
+    if args.commands:
+        commands = discovered_commands(root, args.docs)
+        if args.fzf is not None:
+            return pick_command_with_fzf(root, args.fzf or None, commands)
+        print_commands(commands, render)
+        return 0
     if args.fzf is not None:
         return pick_with_fzf(root, args.fzf or None)
     if args.view is not None:
@@ -918,7 +1414,9 @@ def main() -> int:
     if args.authors:
         return inspect_authors(root)
     if args.components:
-        return inspect_components(root, args.links)
+        return inspect_components(root, args.links, args.component_depth)
+    if args.gn:
+        return inspect_gn(root, args.links)
     if args.ai:
         return inspect_ai(root, args.links)
     if args.security:
@@ -931,7 +1429,8 @@ def main() -> int:
         systems.append("Just (justfile)")
         commands.extend(just)
     scripts = script_commands(root)
-    found_components = components(root)
+    found_components = components(root, args.component_depth)
+    commands.extend(markdown_commands(root))
     commands = dedupe(commands)
     docs = document_paths(root)
     task_files = task_entries(root)
@@ -940,24 +1439,25 @@ def main() -> int:
     print(f"{render.title(f'## {name or root.name}')}  {render.muted(f'({root})')}")
     if not args.compact and (docs or systems or task_files or scripts or found_components or notables):
         print()
-    print_section("docs", [link(path, root, args.links) for path in docs], render)
-    print_section("systems", systems, render)
+    columns = args.columns or 0
+    print_section("docs", [link(path, root, args.links) for path in docs], render, columns)
+    print_section("systems", systems, render, columns)
     if task_files:
-        print_section("launch", [f"launch-config list  [{link(root / path, root, args.links)}]" for path in task_files], render)
-    print_section("scripts", compact([script.command for script in scripts]), render)
+        print_section("launch", [f"launch-config list  [{link(root / path, root, args.links)}]" for path in task_files], render, columns)
+    script_lines = [script.command for script in scripts]
+    print_section("scripts", script_lines if args.all else compact(script_lines), render, columns)
     component_limit = len(found_components) if args.all else 8
-    print_section("components", [component_label(root, component, args.links) for component in found_components[:component_limit]], render)
+    print_section("components", [component_label(root, component, args.links) for component in found_components[:component_limit]], render, columns)
     if len(found_components) > component_limit:
         print(f"{render.section('components')}  … {len(found_components) - component_limit} more; pass --components")
-    print_section("notable", notables, render)
-    print_section("branches", branches, render)
+    print_section("notable", notables, render, columns)
+    print_section("branches", branches, render, columns)
     limit = len(commands) if args.all else 10
     if not args.compact and commands:
         print()
     if commands:
         print(render.section("commands"))
-        for command in commands[:limit]:
-            print(f"  {render.command(f'{command.command:<28}')} {render.muted(command.description)}")
+        print_commands(commands[:limit], render, "  ")
         if len(commands) > limit:
             print(render.muted(f"  … {len(commands) - limit} more; pass --all"))
     else:

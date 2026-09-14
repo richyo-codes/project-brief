@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+import argparse
+
+parser = argparse.ArgumentParser(description='A script to run `gn gen`.')
+parser.add_argument('--runtime-mode', choices=['debug', 'profile', 'release'], default='debug')
+parser.add_argument('--unoptimized', action='store_true')
